@@ -13,6 +13,7 @@ import {
   Rocket
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 const steps = [
   { id: 1, title: "Basics", icon: Building2 },
@@ -22,6 +23,7 @@ const steps = [
 ];
 
 export default function CreateStartupPage() {
+  const router = useRouter();
   const [currentStep, setCurrentStep] = useState(1);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
@@ -47,13 +49,36 @@ export default function CreateStartupPage() {
     if (currentStep > 1) setCurrentStep((prev) => prev - 1);
   };
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     setIsGenerating(true);
-    // Simulate generation delay
-    setTimeout(() => {
+    try {
+      const res = await fetch("/api/startup/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          startupName: formData.startupName,
+          industry: formData.industry,
+          targetAudience: formData.targetAudience,
+          problemStatement: formData.problemStatement,
+          businessModel: formData.businessModel,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setIsSuccess(true);
+        setTimeout(() => {
+          router.push("/dashboard/analysis");
+        }, 2000);
+      } else {
+        alert(data.error || "Failed to generate startup. Please try again.");
+      }
+    } catch (err) {
+      console.error("Error generating startup:", err);
+      alert("An unexpected error occurred. Please try again.");
+    } finally {
       setIsGenerating(false);
-      setIsSuccess(true);
-    }, 2500);
+    }
   };
 
   const slideVariants: any = {
@@ -94,10 +119,10 @@ export default function CreateStartupPage() {
             <strong className="text-white">{formData.startupName}</strong> has been successfully instantiated in the FounderOS simulation environment. Your agents are ready.
           </p>
           <Link
-            href="/dashboard"
+            href="/dashboard/analysis"
             className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-purple-500 to-blue-500 font-bold text-white hover:opacity-90 transition-all shadow-lg shadow-purple-500/25"
           >
-            Go to Dashboard
+            Go to Analysis Dashboard
           </Link>
         </motion.div>
       </div>
