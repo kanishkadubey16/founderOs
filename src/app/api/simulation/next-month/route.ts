@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { connectDB } from "@/lib/mongodb";
 import CompanyState from "@/models/CompanyState";
 import Event from "@/models/Event";
+import Decision from "@/models/Decision";
+import Analysis from "@/models/Analysis";
+import BoardMeeting from "@/models/BoardMeeting";
+import { runAgentsWorkflow } from "@/lib/agents";
 
 export async function POST(request: Request) {
   try {
@@ -119,6 +123,30 @@ export async function POST(request: Request) {
 
     // Query events for this month again to get them from database
     const eventsList = await Event.find({ startupId, month: nextMonth }).lean();
+
+    // Generate board meeting for the advanced month using the LangGraph agents
+    try {
+      const [analysis, decisions] = await Promise.all([
+        Analysis.findOne({ startupId }).lean(),
+        Decision.find({ startupId }).lean(),
+      ]);
+
+      const boardAgentsFeedback = await runAgentsWorkflow({
+        companyState,
+        events: eventsList,
+        decisions,
+        analysis,
+      });
+
+      await BoardMeeting.findOneAndUpdate(
+        { startupId, month: nextMonth },
+        { startupId, month: nextMonth, agents: boardAgentsFeedback },
+        { upsert: true, new: true }
+      );
+    } catch (agentError) {
+      console.error("Failed to generate board meeting on month simulation:", agentError);
+      // We don't want to block the entire simulation advance if agents fail (e.g. OpenAI limits)
+    }
 
     return NextResponse.json({
       success: true,
