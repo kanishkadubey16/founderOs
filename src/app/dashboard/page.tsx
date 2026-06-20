@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   DollarSign, TrendingUp, Users, UserCheck,
@@ -9,8 +10,75 @@ import {
   Sparkles, Rocket, ShieldAlert, Target,
   MessageSquare, FileWarning,
   Info, ChevronRight, Activity,
+  AlertCircle, Loader2,
 } from "lucide-react";
 import { DashboardCard } from "@/components/dashboard/DashboardWidgets";
+
+/* ─── Types ─────────────────────────────────────────────────────── */
+
+interface Startup {
+  _id: string;
+  startupName: string;
+  industry: string;
+  businessModel: string;
+  targetAudience: string;
+}
+
+interface EventType {
+  _id: string;
+  startupId: string;
+  month: number;
+  title: string;
+  description: string;
+  severity: "low" | "medium" | "high";
+  createdAt: string;
+}
+
+interface CompanyState {
+  _id: string;
+  startupId: string;
+  month: number;
+  cash: number;
+  revenue: number;
+  expenses: number;
+  users: number;
+  employees: number;
+  valuation: number;
+  retention: number;
+  churn: number;
+  marketShare: number;
+}
+
+const severityStyles = {
+  high: {
+    icon: AlertTriangle,
+    color: "text-red-400",
+    bg: "bg-red-500/10",
+    dotColor: "bg-red-400",
+    pill: "bg-red-500/8 text-red-400 border-red-500/15"
+  },
+  medium: {
+    icon: Activity,
+    color: "text-amber-400",
+    bg: "bg-amber-500/10",
+    dotColor: "bg-amber-400",
+    pill: "bg-amber-500/8 text-amber-400 border-amber-500/15"
+  },
+  low: {
+    icon: Sparkles,
+    color: "text-blue-400",
+    bg: "bg-blue-500/10",
+    dotColor: "bg-blue-400",
+    pill: "bg-blue-500/8 text-blue-400 border-blue-500/15"
+  }
+};
+
+function fmt(n: number, prefix = "$") {
+  if (n >= 1_000_000) return `${prefix}${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${prefix}${(n / 1_000).toFixed(1)}k`;
+  return `${prefix}${n.toLocaleString()}`;
+}
+
 
 /* ─── Mock Data ────────────────────────────────────────────────── */
 
@@ -384,6 +452,106 @@ function KPICard({ title, value, change, positive, icon, iconBg, sparkData, spar
 /* ─── Main Dashboard Page ──────────────────────────────────────── */
 
 export default function DashboardPage() {
+  const [startup, setStartup] = useState<Startup | null>(null);
+  const [events, setEvents] = useState<EventType[]>([]);
+  const [companyState, setCompanyState] = useState<CompanyState | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isSimulating, setIsSimulating] = useState(false);
+
+  const handleNextMonth = async () => {
+    if (!startup || isSimulating) return;
+    setIsSimulating(true);
+    try {
+      const res = await fetch("/api/simulation/next-month", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ startupId: startup._id }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCompanyState(data.companyState);
+        // Refresh events list
+        const eventsRes = await fetch(`/api/events/${startup._id}`);
+        const eventsData = await eventsRes.json();
+        if (eventsData.success) {
+          setEvents(eventsData.events);
+        }
+      } else {
+        alert(data.error || "Simulation failed");
+      }
+    } catch (err: any) {
+      alert(err.message || "Error running simulation");
+    } finally {
+      setIsSimulating(false);
+    }
+  };
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const startupsRes = await fetch("/api/startup/list");
+        if (!startupsRes.ok) throw new Error("Could not load startup list");
+        const startupsData = await startupsRes.json();
+
+        if (!startupsData.success || !startupsData.startups?.length) {
+          setError("No startup found. Create one first in the wizard.");
+          return;
+        }
+
+        const latestStartup = startupsData.startups[0];
+        setStartup(latestStartup);
+
+        // Fetch events
+        const eventsRes = await fetch(`/api/events/${latestStartup._id}`);
+        const eventsData = await eventsRes.json();
+        if (eventsData.success) {
+          setEvents(eventsData.events);
+        }
+
+        // Fetch company state
+        const stateRes = await fetch(`/api/company-state/${latestStartup._id}`);
+        const stateData = await stateRes.json();
+        if (stateData.success) {
+          setCompanyState(stateData.companyState);
+        }
+      } catch (err: any) {
+        console.error("Error fetching dashboard data:", err);
+        setError(err.message || "Failed to load dashboard data");
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchData();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3 text-zinc-400 bg-dot-pattern">
+        <Loader2 className="h-8 w-8 animate-spin text-purple-400" />
+        <span className="text-sm font-medium">Loading simulation dashboard…</span>
+      </div>
+    );
+  }
+
+  if (error || !startup) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center px-4 bg-dot-pattern">
+        <div className="h-16 w-16 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+          <AlertCircle className="h-8 w-8 text-red-400" />
+        </div>
+        <h2 className="text-xl font-bold text-white">Failed to load dashboard</h2>
+        <p className="text-sm text-zinc-400 max-w-md">{error || "No active startup found. Please create one to view the dashboard."}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="h-10 px-5 rounded-xl bg-white/5 border border-white/10 text-sm font-bold text-white hover:bg-white/10 transition-colors"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8 pb-10 bg-dot-pattern min-h-full">
       {/* Ambient background glow */}
@@ -405,24 +573,30 @@ export default function DashboardPage() {
               </span>
               LIVE SIMULATION
             </span>
-            <span className="text-[11px] text-zinc-600 font-medium">Month 3 of 24</span>
+            <span className="text-[11px] text-zinc-600 font-medium">Month {companyState?.month || 1} of 24</span>
           </div>
           <h1 className="text-[28px] font-black text-white tracking-tight leading-none">
             Dashboard Overview
           </h1>
           <p className="text-sm text-zinc-500 mt-1.5 flex items-center gap-2">
             <Activity className="h-3.5 w-3.5 text-purple-400/60" />
-            VentureAI Labs · SaaS · B2B · Seed Stage
+            {startup.startupName} · {startup.businessModel} · {startup.industry} · Seed Stage
           </p>
         </div>
         <div className="flex items-center gap-3">
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
-            className="flex h-10 items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.03] px-4 text-xs font-semibold text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-300 transition-all duration-300"
+            onClick={handleNextMonth}
+            disabled={isSimulating}
+            className="flex h-10 items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.03] px-4 text-xs font-bold text-zinc-300 hover:bg-white/[0.06] hover:text-white transition-all duration-300 disabled:opacity-50"
           >
-            <CalendarClock className="h-3.5 w-3.5 text-zinc-500" />
-            Month 3, Week 2
+            {isSimulating ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-purple-400" />
+            ) : (
+              <CalendarClock className="h-3.5 w-3.5 text-purple-400" />
+            )}
+            {isSimulating ? "Simulating..." : `Simulate Month ${companyState?.month ? companyState.month + 1 : 2}`}
           </motion.button>
           <motion.button
             whileHover={{ scale: 1.02 }}
@@ -444,7 +618,7 @@ export default function DashboardPage() {
       >
         <KPICard
           title="Cash Balance"
-          value="$284,600"
+          value={companyState ? fmt(companyState.cash) : "$284,600"}
           change="-$34.2K"
           positive={false}
           icon={<DollarSign className="h-4.5 w-4.5 text-emerald-400" />}
@@ -455,7 +629,7 @@ export default function DashboardPage() {
         />
         <KPICard
           title="Revenue (MRR)"
-          value="$48,700"
+          value={companyState ? fmt(companyState.revenue) : "$48,700"}
           change="+15.1%"
           positive={true}
           icon={<TrendingUp className="h-4.5 w-4.5 text-green-400" />}
@@ -466,7 +640,7 @@ export default function DashboardPage() {
         />
         <KPICard
           title="Active Users"
-          value="3,240"
+          value={companyState ? companyState.users.toLocaleString() : "3,240"}
           change="+22.7%"
           positive={true}
           icon={<Users className="h-4.5 w-4.5 text-blue-400" />}
@@ -477,7 +651,7 @@ export default function DashboardPage() {
         />
         <KPICard
           title="Employees"
-          value="14"
+          value={companyState ? String(companyState.employees) : "14"}
           change="+2 hires"
           positive={true}
           icon={<UserCheck className="h-4.5 w-4.5 text-purple-400" />}
@@ -488,7 +662,7 @@ export default function DashboardPage() {
         />
         <KPICard
           title="Burn Rate"
-          value="$34,200/mo"
+          value={companyState ? `${fmt(companyState.expenses)}/mo` : "$34,200/mo"}
           change="+22%"
           positive={false}
           icon={<Flame className="h-4.5 w-4.5 text-orange-400" />}
@@ -510,7 +684,7 @@ export default function DashboardPage() {
         />
         <KPICard
           title="Valuation"
-          value="$4.2M"
+          value={companyState ? fmt(companyState.valuation) : "$4.2M"}
           change="+38%"
           positive={true}
           icon={<Gem className="h-4.5 w-4.5 text-violet-400" />}
@@ -521,7 +695,7 @@ export default function DashboardPage() {
         />
         <KPICard
           title="Market Share"
-          value="2.8%"
+          value={companyState ? `${companyState.marketShare}%` : "2.8%"}
           change="+0.6%"
           positive={true}
           icon={<PieChart className="h-4.5 w-4.5 text-cyan-400" />}
@@ -616,40 +790,69 @@ export default function DashboardPage() {
 
       {/* ─── Panels Row ─────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Recent Events */}
+        {/* Recent Events -> Event Timeline */}
         <DashboardCard
-          title="Recent Events"
-          subtitle="Latest simulation activity"
+          title="Event Timeline"
+          subtitle="Live simulation chronicle"
           delay={0.4}
-          actions={
-            <button className="text-[11px] font-bold text-purple-400 hover:text-purple-300 flex items-center gap-1 transition-colors">
-              View all <ChevronRight className="h-3 w-3" />
-            </button>
-          }
         >
-          <div className="space-y-2.5 max-h-[380px] overflow-y-auto styled-scrollbar pr-1">
-            {recentEvents.map((event, i) => {
-              const Icon = event.icon;
-              return (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, x: -12 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.5 + i * 0.06, duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                  className="flex items-start gap-3 p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.04] hover:bg-white/[0.04] hover:border-white/[0.08] transition-all duration-300 cursor-pointer group"
-                >
-                  <div className={`h-9 w-9 rounded-xl ${event.bg} flex items-center justify-center shrink-0 mt-0.5 group-hover:scale-110 transition-transform duration-300`}>
-                    <Icon className={`h-4 w-4 ${event.color}`} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold text-white group-hover:text-purple-300 transition-colors truncate">{event.title}</p>
-                    <p className="text-[10px] text-zinc-500 mt-0.5 line-clamp-2 leading-relaxed">{event.desc}</p>
-                  </div>
-                  <span className="text-[9px] text-zinc-600 shrink-0 mt-1 font-medium">{event.time}</span>
-                </motion.div>
-              );
-            })}
-          </div>
+          {events.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center h-[280px]">
+              <AlertCircle className="h-8 w-8 text-zinc-600 mb-2" />
+              <p className="text-xs font-semibold text-zinc-400">No events found</p>
+              <p className="text-[10px] text-zinc-500 mt-1 max-w-[200px]">Simulate months to trigger database events.</p>
+            </div>
+          ) : (
+            <div className="relative pl-5 space-y-6 max-h-[380px] overflow-y-auto styled-scrollbar pr-1">
+              {/* Timeline central connector line */}
+              <div className="absolute left-[9px] top-2 bottom-2 w-0.5 bg-gradient-to-b from-purple-500/30 via-white/5 to-transparent rounded-full" />
+
+              {events.map((event, i) => {
+                const s = severityStyles[event.severity] || severityStyles.low;
+                const Icon = s.icon;
+                return (
+                  <motion.div
+                    key={event._id || i}
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: i * 0.05, duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                    className="relative group flex items-start gap-3"
+                  >
+                    {/* Timeline Node dot */}
+                    <div className={`absolute -left-[20px] top-1.5 h-2 w-2 rounded-full border-2 border-[#050508] ${s.dotColor} z-10 transition-transform group-hover:scale-150`} />
+
+                    <div className="flex-1 bg-white/[0.015] hover:bg-white/[0.035] border border-white/[0.04] hover:border-white/[0.08] rounded-xl p-3.5 transition-all duration-300">
+                      <div className="flex items-start justify-between gap-2 mb-1.5">
+                        <div className="flex items-center gap-2">
+                          <div className={`h-6 w-6 rounded-md ${s.bg} flex items-center justify-center shrink-0`}>
+                            <Icon className={`h-3.5 w-3.5 ${s.color}`} />
+                          </div>
+                          <span className="text-xs font-bold text-white group-hover:text-purple-300 transition-colors">
+                            {event.title}
+                          </span>
+                        </div>
+                        <span className={`text-[8px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded border ${s.pill}`}>
+                          {event.severity}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-zinc-400 leading-relaxed">
+                        {event.description}
+                      </p>
+                      <div className="mt-2.5 flex items-center justify-between text-[9px] font-bold text-zinc-500">
+                        <span className="uppercase tracking-wider">Month {event.month}</span>
+                        <span>
+                          {event.createdAt ? new Date(event.createdAt).toLocaleDateString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                          }) : ""}
+                        </span>
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
         </DashboardCard>
 
         {/* AI Insights */}

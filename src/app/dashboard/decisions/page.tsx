@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Lightbulb,
@@ -16,8 +16,49 @@ import {
   AlertTriangle,
   ArrowRight,
   ShieldAlert,
-  Wallet
+  Wallet,
+  AlertCircle,
+  Loader2,
 } from "lucide-react";
+
+interface Startup {
+  _id: string;
+  startupName: string;
+  industry: string;
+  businessModel: string;
+}
+
+interface CompanyState {
+  _id: string;
+  startupId: string;
+  month: number;
+  cash: number;
+  revenue: number;
+  expenses: number;
+  users: number;
+  employees: number;
+  valuation: number;
+  retention: number;
+  churn: number;
+  marketShare: number;
+}
+
+interface DecisionType {
+  _id: string;
+  startupId: string;
+  title: string;
+  category: string;
+  cost: number;
+  impact: string;
+  month: number;
+}
+
+function fmt(n: number, prefix = "$") {
+  if (n >= 1_000_000) return `${prefix}${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${prefix}${(n / 1_000).toFixed(1)}k`;
+  return `${prefix}${n.toLocaleString()}`;
+}
+
 
 /* ─── Mock Data ────────────────────────────────────────────────── */
 
@@ -179,23 +220,121 @@ const decisionData = [
 
 export default function DecisionCenterPage() {
   const [activeTab, setActiveTab] = useState("Hiring");
+  const [startup, setStartup] = useState<Startup | null>(null);
+  const [companyState, setCompanyState] = useState<CompanyState | null>(null);
   const [executedDecisions, setExecutedDecisions] = useState<string[]>([]);
-  
-  // Base projected metrics
-  const [metrics, setMetrics] = useState({
-    revenue: "$48.7K",
-    users: "3,240",
-    burnRate: "$34.2K",
-    retention: "95%"
-  });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleExecute = (id: string) => {
-    if (executedDecisions.includes(id)) return;
-    setExecutedDecisions((prev) => [...prev, id]);
-    // In a real app, this would recalculate overall state based on the decision's metrics payload
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const startupsRes = await fetch("/api/startup/list");
+        if (!startupsRes.ok) throw new Error("Could not load startup list");
+        const startupsData = await startupsRes.json();
+
+        if (!startupsData.success || !startupsData.startups?.length) {
+          setError("No startup found. Create one first in the wizard.");
+          return;
+        }
+
+        const latestStartup = startupsData.startups[0];
+        setStartup(latestStartup);
+
+        // Fetch company state
+        const stateRes = await fetch(`/api/company-state/${latestStartup._id}`);
+        const stateData = await stateRes.json();
+        if (stateData.success) {
+          setCompanyState(stateData.companyState);
+        }
+
+        // Fetch executed decisions
+        const decisionsRes = await fetch(`/api/decision/list/${latestStartup._id}`);
+        const decisionsData = await decisionsRes.json();
+        if (decisionsData.success) {
+          // Map title/types back to IDs to display execution checkmark overlay
+          const titleToIdMap: Record<string, string> = {
+            "Hire Engineer": "hire-eng",
+            "Hire Product Manager": "hire-pm",
+            "Hire Marketing Specialist": "hire-mktg",
+            "Marketing Campaign": "mktg-social",
+            "Influencer Partnership": "mktg-influencer",
+            "Launch Referral Program": "mktg-referral",
+            "Launch Analytics Dashboard": "prod-feature",
+            "Major UI/UX Overhaul": "prod-ui",
+            "Build AI Co-pilot Assistant": "prod-ai",
+            "Raise Seed Funding": "fund-seed",
+            "Raise Angel Round": "fund-angel",
+            "Commit to Bootstrapping": "fund-bootstrap",
+            "Expand to European Market": "exp-market",
+            "Target Enterprise Segment": "exp-segment"
+          };
+          const ids = decisionsData.decisions.map((d: any) => titleToIdMap[d.title] || d.title);
+          setExecutedDecisions(ids);
+        }
+      } catch (err: any) {
+        console.error("Error loading decisions data:", err);
+        setError(err.message || "Failed to load strategic data");
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchData();
+  }, []);
+
+  const handleExecute = async (id: string) => {
+    if (executedDecisions.includes(id) || !startup) return;
+
+    try {
+      const res = await fetch("/api/decision/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          startupId: startup._id,
+          decisionId: id,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Execution failed");
+      }
+
+      setExecutedDecisions((prev) => [...prev, id]);
+      setCompanyState(data.companyState);
+    } catch (err: any) {
+      alert(err.message || "Error executing decision");
+    }
   };
 
   const filteredDecisions = decisionData.filter(d => d.category === activeTab);
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3 text-zinc-400 bg-[#050508]">
+        <Loader2 className="h-8 w-8 animate-spin text-amber-400" />
+        <span className="text-sm font-medium">Loading Decision Center…</span>
+      </div>
+    );
+  }
+
+  if (error || !startup) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center px-4 bg-[#050508]">
+        <div className="h-16 w-16 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+          <AlertCircle className="h-8 w-8 text-red-400" />
+        </div>
+        <h2 className="text-xl font-bold text-white">Failed to load decisions</h2>
+        <p className="text-sm text-zinc-400 max-w-md">{error || "No active startup found."}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="h-10 px-5 rounded-xl bg-white/5 border border-white/10 text-sm font-bold text-white hover:bg-white/10 transition-colors"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8 pb-12">
@@ -210,24 +349,24 @@ export default function DecisionCenterPage() {
             <Zap className="h-3 w-3" />
             Strategic Hub
           </span>
-          <span className="text-xs text-zinc-500">Q3 Planning</span>
+          <span className="text-xs text-zinc-500">Month {companyState?.month || 1} Planning</span>
         </div>
         <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-2">
           <Lightbulb className="h-6 w-6 text-amber-400" />
           Decision Center
         </h1>
         <p className="text-sm text-zinc-400 mt-1 max-w-2xl">
-          Evaluate tradeoffs and execute critical strategic initiatives. Actions taken here instantly update your startup's core simulation metrics.
+          Evaluate tradeoffs and execute critical strategic initiatives for {startup.startupName}. Actions taken here instantly update your startup's core simulation metrics.
         </p>
       </motion.div>
 
       {/* ─── Projected Impact Metrics ────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: "Projected MRR", value: metrics.revenue, icon: TrendingUp, color: "text-emerald-400", bg: "bg-emerald-500/10" },
-          { label: "Projected Users", value: metrics.users, icon: Users, color: "text-blue-400", bg: "bg-blue-500/10" },
-          { label: "Projected Burn", value: metrics.burnRate, icon: Flame, color: "text-red-400", bg: "bg-red-500/10" },
-          { label: "Expected Retention", value: metrics.retention, icon: CheckCircle2, color: "text-purple-400", bg: "bg-purple-500/10" },
+          { label: "Projected MRR", value: companyState ? fmt(companyState.revenue) : "$48.7K", icon: TrendingUp, color: "text-emerald-400", bg: "bg-emerald-500/10" },
+          { label: "Projected Users", value: companyState ? companyState.users.toLocaleString() : "3,240", icon: Users, color: "text-blue-400", bg: "bg-blue-500/10" },
+          { label: "Projected Burn", value: companyState ? `${fmt(companyState.expenses)}/mo` : "$34.2K", icon: Flame, color: "text-red-400", bg: "bg-red-500/10" },
+          { label: "Expected Retention", value: companyState ? `${companyState.retention}%` : "95%", icon: CheckCircle2, color: "text-purple-400", bg: "bg-purple-500/10" },
         ].map((metric, i) => {
           const Icon = metric.icon;
           return (
